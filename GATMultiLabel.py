@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 '''
-    Under development to replicate this paper https://arxiv.org/abs/2003.11644
+    Under development to implement this paper https://arxiv.org/abs/2003.11644
     MAGNET: Multi-Label Text Classification using Attention-based Graph Neural Network
 
     Step by Step (In my understanding):
@@ -20,22 +20,31 @@ import torch.nn.functional as F
        4. Label Embedding Matrix (H) will be fed to GAT
        5. To get attention (a) i have to calculate HW multiply HW transpose
           then i fed to ReLU functions [Equation 6],
-          then i get matrix with size (num labels * num labels)
+          then i get matrix with size (num labels * num labels) consisting of aij
 
        5. Then i make GAT as many as attention_head then i add up all the output
           from GAT element-wise divide by number of attention_head then fed it to
-          tanh functions
+          tanh functions [Equation 7, 8, 9]
     
-       6. GAT process finished
+       6. GAT process finished, ready to fed into next layer or multiply with text features
+
 
     Unsolved question:
     1. Where should i put adjacency matrix in GAT?
-    2. In Equation 5, what is concatenating means? In my understanging,
-       concatenating mean is combining two arrays, ex: a=[1, 2, 3] and
-       b=[4, 5, 6] then concat(a,b) will be [1,2,3,4,5,6] but Equation 5
+    2. In Equation 5, what does concatenating mean? In my understanging,
+       concatenating mean is combining two arrays according to dimension, ex: a=[1, 2, 3] and
+       b=[4, 5, 6] then concat(a,b, dim=0) will be [1,2,3,4,5,6] but Equation 5
        said i have to transpose HjW. So i choose to multiply HiW and HjW
     3 Equation 4 and Equation 7 (multiple attention) have same goal which is to calculate new H but Why 
-      Equation 4 and Equation 7 have different 
+      Equation 4 and Equation 7 have different activation function
+    4. In your paper on table 2 there is Vocab Size, i dont understand why do you have different vocab size
+       because Pretrained BERT has fixed Vocab Size right?
+    5. How do you embed text using BERT? Do you encode whole sentence or
+       word by word then you put it to Embedding Layer?
+    
+       
+
+
 '''
 class GraphAttentionLayer(nn.Module):
  
@@ -63,10 +72,11 @@ class GAT(nn.Module):
         self.nheads = nheads
         self.attentions = [GraphAttentionLayer(nfeat, nhid) for _ in range(nheads)]
 
-    def forward(self, x, adj):
+    def forward(self, H, adj):
         
+        # i still put adjacency as an input even i am not using it
         sum = 0
         for att in self.attentions:
-            sum += att(x, adj)
+            sum += att(H, adj)
             
-        return torch.tanh(sum/self.nheads)
+        return torch.tanh(sum/self.nheads) #Equation 7, 8, 9

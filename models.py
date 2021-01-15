@@ -21,7 +21,7 @@ from GATMultilabel import GAT
 
 class MAGNET(nn.Module):
     def __init__(self, input_size, hidden_size, num_classes, adj, rnn='lstm'):
-        super(BRNN, self).__init__()
+        super(MAGNET, self).__init__()
         
         self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True, bidirectional=True)
         self.gat1 = GAT(input_size, hidden_size*2, attention_heads)
@@ -29,6 +29,7 @@ class MAGNET(nn.Module):
         self.sigmoid = nn.Sigmoid()
     
     # x is text features from sentences representation using BERT with size (SEQ_LEN, 768)
+    # i encode entire sentece + pad using BERT, not word by word.
     # feat is label embedding
     # adj is adjacency
 
@@ -43,6 +44,6 @@ class MAGNET(nn.Module):
         att = att.transpose(0, 1) #att.size : (hidden_size*2, N)
 
         out = torch.matmul(features, att)
-        out = torch.sigmoid(out) #out.size : (Batch_size, N)
+        out = torch.sigmoid(out)
 
-        return out
+        return out #out.size : (Batch_size, N)
