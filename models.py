@@ -20,15 +20,14 @@ from GATMultilabel import GAT
 '''
 
 class MAGNET(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes, adj, rnn='lstm'):
+    def __init__(self, input_size, hidden_size, num_classes, rnn='lstm'):
         super(MAGNET, self).__init__()
         
         self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True, bidirectional=True)
         self.gat1 = GAT(input_size, hidden_size*2, attention_heads)
         self.gat2 = GAT(hidden_size*2, hidden_size*2, attention_heads)
-        self.sigmoid = nn.Sigmoid()
     
-    # x is text features from sentences representation using BERT with size (SEQ_LEN, 768)
+    # x is text features from sentences representation using BERT with size (batch_size, SEQ_LEN, 768)
     # i encode entire sentece + pad using BERT, not word by word.
     # feat is label embedding
     # adj is adjacency
