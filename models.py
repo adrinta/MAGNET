@@ -56,16 +56,17 @@ class GAT(nn.Module):
 class MAGNET(nn.Module):
   def __init__(self, input_size, hidden_size, adjacency, heads=4, dropout=0.5):
     super(MAGNET, self).__init__()
-    self.rnntype = rnntype
-    if self.rnntype == 'lstm':
-      self.rnn = nn.LSTM(input_size, hidden_size,
-                         batch_first=True, bidirectional=True)
+    
+    self.rnn = nn.LSTM(input_size, hidden_size, batch_first=True, bidirectional=True)
 
     self.gat = GAT(input_size, hidden_size*2, heads)
     self.adjacency = nn.Parameter(adjacency)
     self.drop = nn.Dropout(dropout)
  
   def forward(self, features, h):
+
+    #features = last hidden states of BERT from the sentence (if sequence length is 128 so features will be BATCH_SIZE X 128 x 768)
+    #h = node features from BERT last hidden states of the word(s) from the label
     
     out, (hidden, cell) = self.rnn(features)
 
