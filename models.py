@@ -1,48 +1,81 @@
-import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 import torch.nn.functional as F
-from GATMultilabel import GAT
 
-'''
-    # Hyperparameters
-    input_size = 768
-    hidden_size = 250
-    num_classes = 90
-    learning_rate = 0.001
-    batch_size = 250
-    num_epochs = 250
-    attention_heads = 4
 
-    #Loss and Optimezer
-    criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-'''
+class GraphAttentionLayer(nn.Module):
+  def __init__(self, inp, out):
+    super(GraphAttentionLayer, self).__init__()
+    self.W = nn.Linear(inp, out, bias=False)
+    self.a = nn.Linear(out*2, 1, bias=False)
+  
+  def forward(self, h, adj):
+    Wh = self.W(h)
+    attention = self.catneighbour(Wh)*adj.unsqueeze(2)
+    attention = self.a(attention).squeeze(2)
+    attention = F.leaky_relu(attention, 0.1)
+    h_hat = torch.mm(attention, Wh)
+    h_hat = F.leaky_relu(h_hat, 0.1)
+    
+    return h_hat
+ 
+  def catneighbour(self, Wh):
+    N = Wh.size(0)
+    Whi = Wh.repeat_interleave(N, dim=0)
+    Whj = Wh.repeat(N, 1)
+    WhiWhj = torch.cat([Whi, Whj], dim=1)
+    WhiWhj = WhiWhj.view(N, N, Wh.size(1)*2)
+    return WhiWhj
+ 
+class MultiHeadGAT(nn.Module):
+  def __init__(self, inp, out, heads, merge=False):
+    super(MultiHeadGAT, self).__init__()
+    self.merge = merge
+    self.attentions = nn.ModuleList([GraphAttentionLayer(inp, out) for _ in range(heads)])
+  
+  def forward(self, h, adj):
+    heads_out = [att(h, adj) for att in self.attentions]
+    if self.merge:
+      out = torch.cat(heads_out, dim=1)
+    else:
+      out = torch.stack(heads_out, dim=0).mean(0)
+    
+    return torch.tanh(out)
+ 
+class GAT(nn.Module):
+  def __init__(self, inp, out, heads):
+    super(GAT, self).__init__()
+    self.gat1 = MultiHeadGAT(inp, out, heads)
+    self.gat2 = MultiHeadGAT(out, out, heads)
+  
+  def forward(self, h, adj):
+    out = self.gat1(h, adj)
+    out = self.gat2(out, adj)
+    return out
 
 class MAGNET(nn.Module):
-    def __init__(self, input_size, hidden_size, num_classes, rnn='lstm'):
-        super(MAGNET, self).__init__()
-        
-        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True, bidirectional=True)
-        self.gat1 = GAT(input_size, hidden_size*2, attention_heads)
-        self.gat2 = GAT(hidden_size*2, hidden_size*2, attention_heads)
+  def __init__(self, input_size, hidden_size, adjacency, heads=4, dropout=0.5):
+    super(MAGNET, self).__init__()
+    self.rnntype = rnntype
+    if self.rnntype == 'lstm':
+      self.rnn = nn.LSTM(input_size, hidden_size,
+                         batch_first=True, bidirectional=True)
+
+    self.gat = GAT(input_size, hidden_size*2, heads)
+    self.adjacency = nn.Parameter(adjacency)
+    self.drop = nn.Dropout(dropout)
+ 
+  def forward(self, features, h):
     
-    # x is text features from sentences representation using BERT with size (batch_size, SEQ_LEN, 768)
-    # i encode entire sentece + pad using BERT, not word by word.
-    # feat is label embedding
-    # adj is adjacency
+    out, (hidden, cell) = self.rnn(features)
 
-    def forward(self, x, feat, adj): # feat.size : (N, 768)
-
-        features, _ = self.lstm(x)
-        features = features[:, -1, :].squeeze(1) #features.size : (batch_size, hidden_size*2)
-
-  
-        att = self.gat1(feat, adj)
-        att = self.gat2(att, adj)
-        att = att.transpose(0, 1) #att.size : (hidden_size*2, N)
-
-        out = torch.matmul(features, att)
-        out = torch.sigmoid(out)
-
-        return out #out.size : (Batch_size, N)
+    out = torch.cat([hidden[-2, :, :], hidden[-1, :, :]], dim=1)
+    out = self.drop(out)
+    
+    att = self.gat(h, self.adjacency)
+    att = self.drop(att)
+    att = att.transpose(0, 1)
+    
+    out = torch.mm(out, att)
+ 
+    return out
