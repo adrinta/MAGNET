@@ -4,77 +4,84 @@ import torch.nn.functional as F
 
 
 class GraphAttentionLayer(nn.Module):
-  def __init__(self, inp, out):
+  def __init__(self, inp, out, slope):
     super(GraphAttentionLayer, self).__init__()
     self.W = nn.Linear(inp, out, bias=False)
     self.a = nn.Linear(out*2, 1, bias=False)
+    self.leakyrelu = nn.LeakyReLU(slope)
+    self.softmax = nn.Softmax(dim=1)
   
   def forward(self, h, adj):
     Wh = self.W(h)
-    attention = self.catneighbour(Wh)*adj.unsqueeze(2)
-    attention = self.a(attention).squeeze(2)
-    attention = F.leaky_relu(attention, 0.1)
+    Whcat = self.Wh_concat(Wh, adj)
+    e = self.leakyrelu(self.a(Whcat).squeeze(2))
+    zero_vec = -9e15*torch.ones_like(e)
+    attention = torch.where(adj > 0, e, zero_vec)
+    attention = self.softmax(attention)
     h_hat = torch.mm(attention, Wh)
-    h_hat = F.leaky_relu(h_hat, 0.1)
-    
+
     return h_hat
  
-  def catneighbour(self, Wh):
+  def Wh_concat(self, Wh, adj):
     N = Wh.size(0)
     Whi = Wh.repeat_interleave(N, dim=0)
     Whj = Wh.repeat(N, 1)
     WhiWhj = torch.cat([Whi, Whj], dim=1)
     WhiWhj = WhiWhj.view(N, N, Wh.size(1)*2)
+
     return WhiWhj
  
 class MultiHeadGAT(nn.Module):
-  def __init__(self, inp, out, heads, merge=False):
+  def __init__(self, inp, out, heads, slope):
     super(MultiHeadGAT, self).__init__()
-    self.merge = merge
-    self.attentions = nn.ModuleList([GraphAttentionLayer(inp, out) for _ in range(heads)])
+    self.attentions = nn.ModuleList([GraphAttentionLayer(inp, out, slope) for _ in range(heads)])
+    self.tanh = nn.Tanh()
   
   def forward(self, h, adj):
     heads_out = [att(h, adj) for att in self.attentions]
-    if self.merge:
-      out = torch.cat(heads_out, dim=1)
-    else:
-      out = torch.stack(heads_out, dim=0).mean(0)
+    out = torch.stack(heads_out, dim=0).mean(0)
     
-    return torch.tanh(out)
+    return self.tanh(out)
  
 class GAT(nn.Module):
-  def __init__(self, inp, out, heads):
+  def __init__(self, inp, out, heads, slope=0.01):
     super(GAT, self).__init__()
-    self.gat1 = MultiHeadGAT(inp, out, heads)
-    self.gat2 = MultiHeadGAT(out, out, heads)
+    self.gat1 = MultiHeadGAT(inp, out, heads, slope)
+    self.gat2 = MultiHeadGAT(out, out, heads, slope)
   
   def forward(self, h, adj):
     out = self.gat1(h, adj)
     out = self.gat2(out, adj)
+
     return out
 
+# Using static embedding
 class MAGNET(nn.Module):
-  def __init__(self, input_size, hidden_size, adjacency, heads=4, dropout=0.5):
+  def __init__(self, input_size, hidden_size, adjacency, embeddings, heads=4, slope=0.01, dropout=0.5):
     super(MAGNET, self).__init__()
+
+    self.embedding = nn.Embedding.from_pretrained(embeddings)
+
+    self.rnn = nn.LSTM(input_size,
+                        hidden_size,
+                        batch_first=True,
+                        bidirectional=True)
+
+    self.gat = GAT(input_size, hidden_size*2, heads, slope)
     
-    self.rnn = nn.LSTM(input_size, hidden_size, batch_first=True, bidirectional=True)
-
-    self.gat = GAT(input_size, hidden_size*2, heads)
     self.adjacency = nn.Parameter(adjacency)
-    self.drop = nn.Dropout(dropout)
+    
+    self.dropout = nn.Dropout(dropout)
  
-  def forward(self, features, h):
-
-    #features = last hidden states of BERT from the sentence (if sequence length is 128 so features will be BATCH_SIZE X 128 x 768)
-    #h = node features from BERT last hidden states of the word(s) from the label
+  def forward(self, token, label_embedding):
+    features = self.embedding(token)
     
     out, (hidden, cell) = self.rnn(features)
-
-    out = torch.cat([hidden[-2, :, :], hidden[-1, :, :]], dim=1)
-    out = self.drop(out)
     
-    att = self.gat(h, self.adjacency)
-    att = self.drop(att)
+    out = torch.cat([hidden[-2, :, :], hidden[-1, :, :]], dim=1)
+    out = self.dropout(out)
+    
+    att = self.dropout(self.gat(label_embedding, self.adjacency))
     att = att.transpose(0, 1)
     
     out = torch.mm(out, att)
