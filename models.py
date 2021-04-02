@@ -86,3 +86,35 @@ class MAGNET(nn.Module):
     out = torch.mm(out, att)
  
     return out
+
+
+#Contextual Embedding
+
+class ContextMAGNET(nn.Module):
+  def __init__(self, input_size, hidden_size, adjacency, heads=4, slope=0.01, dropout=0.5):
+    super(ContextMAGNET, self).__init__()
+
+    self.rnn = nn.LSTM(input_size,
+                        hidden_size,
+                        batch_first=True,
+                        bidirectional=True)
+
+    self.gat = GAT(input_size, hidden_size*2, heads, slope)
+    
+    self.adjacency = nn.Parameter(adjacency)
+    
+    self.dropout = nn.Dropout(dropout)
+ 
+  def forward(self, features, label_embedding):
+
+    out, (hidden, cell) = self.rnn(features)
+    
+    out = torch.cat([hidden[-2, :, :], hidden[-1, :, :]], dim=1)
+    out = self.dropout(out)
+    
+    att = self.dropout(self.gat(label_embedding, self.adjacency))
+    att = att.transpose(0, 1)
+    
+    out = torch.mm(out, att)
+ 
+    return out
